@@ -1,4 +1,4 @@
-#' Create 256 colors graduately transitioning from
+#' Create 256 colors gradually transitioning from
 #' Blue to Yellow to Red.
 #'
 #' @param num  A integer number to specify the number of colors to generate. The default value is 256.
@@ -9,6 +9,7 @@
 #' require(graphics)
 #' filled.contour(volcano,col=colors,nlevels=length(colors)-1,asp=1)
 #' filled.contour(volcano,color.palette = GP.create.cols, nlevels=256, asp = 1)
+#' @useDynLib BayesGPfit,.registration = TRUE
 #' @export
 GP.create.cols = function(num=256L){
   num = as.integer(num)
@@ -217,12 +218,59 @@ GP.std.grids = function(grids,center=apply(grids,2,mean),scale=NULL,max_range = 
 #' plot(fig[[2]],split=c(1,2,2,2),more=TRUE)
 #' plot(fig[[3]],split=c(2,1,2,2),more=TRUE)
 #' plot(fig[[4]],split=c(2,2,2,2))
-#' @useDynLib BayesGPfit,.registration = TRUE, Wrapper_R_GP_eigen_funcs
+# @useDynLib BayesGPfit,.registration = TRUE, Wrapper_R_GP_eigen_funcs
 #' @export
 GP.eigen.funcs.fast = function(grids,poly_degree=10L,a=0.01,b=1.0){
   num_funcs = GP.num.eigen.funs(poly_degree,ncol(grids))
   eigen_funcs = vector(mode="numeric",length=num_funcs*nrow(grids))
   res = .C('Wrapper_R_GP_eigen_funcs',
+           eigen_funcs_R = as.double(eigen_funcs),
+           num_funcs_R = as.integer(num_funcs),
+           grids_R = as.double(grids),
+           grids_size_R = as.integer(nrow(grids)),
+           dim_R = as.integer(ncol(grids)),
+           poly_degree_R = as.integer(poly_degree),
+           a_R = as.double(a),
+           b_R = as.double(b))
+  return(matrix(res$eigen_funcs_R,nrow=res$grids_size_R,ncol=res$num_funcs_R))
+}
+
+#' Create orthogonal eigen functions based on the standard modified exponential squared correlation kernel and
+#' Gram-Schimit Process
+#' @title Create orthogonal eigen functions
+#' @param grids A matrix where rows represent points and columns are coordinates.
+#' @param poly_degree A integer number specifies the highest degree of Hermite polynomials. The default value is 10L.
+#' @param a A positive real number specifies the concentration parameter in the modified exponetial squared kernel. The larger value the more the GP concentrates around the center. The default value is 0.01.
+#' @param b A positive real number specifies the smoothness parameter in the modeified exponetial squared kernel. The smaller value the smoother the GP is. The default value is 1.0.
+#' @return A matrix represents a set of eigen functions evaluated at grid points.
+#' The number of rows is equal to the number of grid points. The number of columns is choose(poly_degree+d,d), where d is the dimnension of the grid points.
+#' @details
+#' Compute eigen values of the standard modified exponential squared kernel on d-dimensional grids
+#'
+#' \eqn{cor(X(s_1),X(s_2)) = \exp{-a*(s_1^2+*s_2^2)-b*(s_1-s_2)^2}}
+#'
+#' where \eqn{a} is the concentration parameter and \eqn{b} is the smoothness parameter. The expected ranges of each coordinate is from -6 to 6.
+#'
+#'
+#' @author Jian Kang <jiankang@umich.edu>
+#' @examples
+#' library(lattice)
+#' grids = GP.generate.grids(d=2L)
+#' Psi_mat = GP.eigen.funcs.fast.orth(grids)
+#' fig = list()
+#' for(i in 1:4){
+#'    fig[[i]] = levelplot(Psi_mat[,i]~grids[,1]+grids[,2])
+#' }
+#' plot(fig[[1]],split=c(1,1,2,2),more=TRUE)
+#' plot(fig[[2]],split=c(1,2,2,2),more=TRUE)
+#' plot(fig[[3]],split=c(2,1,2,2),more=TRUE)
+#' plot(fig[[4]],split=c(2,2,2,2))
+# @useDynLib BayesGPfit,.registration = TRUE, Wrapper_R_GP_eigen_funcs_orth
+#' @export
+GP.eigen.funcs.fast.orth = function(grids,poly_degree=10L,a=0.01,b=1.0){
+  num_funcs = GP.num.eigen.funs(poly_degree,ncol(grids))
+  eigen_funcs = vector(mode="numeric",length=num_funcs*nrow(grids))
+  res = .C('Wrapper_R_GP_eigen_funcs_orth',
            eigen_funcs_R = as.double(eigen_funcs),
            num_funcs_R = as.integer(num_funcs),
            grids_R = as.double(grids),
@@ -701,6 +749,61 @@ GP.simulate.curve.fast = function(x,poly_degree,a,b,
   return(list(f=f,x=x,work_x=work_x))
 }
 
+#' Simulate multiple curves on d-dimensional Euclidean space based on Gaussian
+#' processes via modified exponential squared kernel.
+#'
+#' @param n An integer number to specify the number of curves to simulate
+#' @param x A matrix of real numbers as grid points where rows are observations and columns are coordinates.
+#' @param poly_degree An integer number to specify the highest degree of Hermite polynomials. The default value is 10L.
+#' @param a A positive real number to specify the concentration parameter in the standard modified exponential squared kernel. The larger value the more the GP concentrates around the center. The default value is 0.01.
+#' @param b A positive real number to specify the smoothness parameter in the standard modified exponential squared kernel. The smaller value the smoother the GP is. The default value is 1.0.
+#' @param center A vector of real numbers specifying the centroid parameters in the modified exponential squared kernel. The default value is NULL and set to the center of the grid points: apply(x,2,mean).
+#' @param scale A vector of positive numbers specifying the scale parameters in the modified exponential squared kernel. The default value is NULL and set to values such that grid points in a range of (-max_range,max_range) in each dimension.
+#' @param max_range A positive real number indicating the maximum range of the grid points to specify the scale parameter. The default value is NULL and set to 6.
+#' @return A list of variables representing the simulated curve:
+#' \describe{
+#'  \item{f}{A matrix of real numbers for the multiple simulated curves.}
+#'  \item{x}{A matrix of real numbers for the grid points where rows are observations and columns are coordinates.}
+#'  \item{work_x}{A matrix of real numbers for the standardized grid points for the simulated curve. It has the same dimension as "x".}
+#' }
+#'
+#' @author Jian Kang <jiankang@umich.edu>
+#'
+#' @examples
+#'library(BayesGPfit)
+#'library(lattice)
+#'set.seed(1224)
+#'dat = list()
+#'dat$x = GP.generate.grids(d=1,num_grids = 100)
+#'curves = GP.simulate.curves.fast(n = 10, dat$x,a=0.01,b=0.5,poly_degree=20L)
+#'GP.plot.curves(curves,main="Simulated Curves")
+#' @export
+GP.simulate.curves.fast = function (n, x, poly_degree, a, b, center = NULL, scale = NULL,
+                                    max_range = 6)
+{
+  x = cbind(x)
+  d = ncol(x)
+  if (is.null(center)) {
+    center = apply(x, 2, mean)
+  }
+  c_grids = t(x) - center
+  if (is.null(scale)) {
+    max_grids = pmax(apply(c_grids, 1, max), -apply(c_grids,
+                                                    1, min))
+    scale = as.numeric(max_grids/max_range)
+  }
+  work_x = GP.std.grids(x, center = center, scale = scale,
+                        max_range = max_range)
+  Xmat = GP.eigen.funcs.fast(grids = work_x, poly_degree = poly_degree,
+                             a = a, b = b)
+  lambda = GP.eigen.value(poly_degree = poly_degree, a = a,
+                          b = b, d = d)
+  betacoef = matrix(rnorm(ncol(Xmat)*n, mean = 0, sd = sqrt(lambda)),ncol=n)
+  f = Xmat %*% betacoef
+  return(list(f = f, x = x, work_x = work_x))
+}
+
+
 #'Graphical representation of one, two, three-dimensional
 #'curves
 #'@param curve A list object with two elements:
@@ -834,16 +937,23 @@ GP.plot.curve = function(curve,xlab=NULL,ylab=NULL,
 #'  \item{f}{A vector of real numbers for the curve.}
 #'  \item{x}{A matrix of real numbers for the grid points where rows are observations and columns are coordinates.}
 #'}
+#'or a list object of two components
+#'\describe{
+#'  \item{f}{A matrix of real numbers for the multiple curves.}
+#'  \item{x}{A matrix of real numbers for the grid points where rows are observations and columns are coordinates.}
+#'}
+
 #'@param xlab A character specifying the label of x-axis for 1D, 2D and 3D case. The default value is NULL and set to "x" for 1D case and "x1" for 2D case.
 #'@param ylab A character specifying the label of y-axis for 1D curve or coords for 2D and 3D case.  The default value is NULL and set to "x2" for 2D case.
 #'@param cols A vector of integer numbers or characters to specify the plot colors for 1D curve. The default value is NULL and set to 1:length(curves).
 #'@param lwd A positive number to specify the width of lines for 1D curve.
 #'@param type A character specifying what type of plot should be drawn for 1D curve. Possible types are the same as \link{plot}.
-#'@param leg_pos A character spaecifying the position of legend for multiple 1D curves. Possible valeus are "topleft", "topright","bottemright","bottemleft".
+#'@param leg_pos A character specifying the position of legend for multiple 1D curves. Possible valeus are "topleft", "topright","bottemright","bottemleft".
 #'@param xlim A vector of two real numbers specifying the range of x-axis for 1D, 2D and 3D case. The default value is NULL and set to range(curve$x[,1]).
 #'@param ylim A vector of two real numbers specifying the range of y-axis only for 2D, 3D case. The default value is NULL and set to range(curve$x[,2]).
 #'@param col.regions A vector of RGB colors for 2D and 3D plots. See \link{GP.create.cols}. The default value is NULL and set to GP.create.cols().
 #'@param cut An integer specifying the number of colors in 2D  plots. The default value is NULL and set to length(col.regions)-1.
+#'@param nms A vector of charterers for figure titles. Default is Null in which case it is set to the names of the list object \code{curves}
 #'@param ... All other parameters for plot (1D case) and levelplot (2D case).
 #'
 #'@return NULL for 1D case. An object of class "trellis" for 2D and 3D cases.
@@ -873,7 +983,19 @@ GP.plot.curve = function(curve,xlab=NULL,ylab=NULL,
 GP.plot.curves = function(curves,xlab=NULL,ylab=NULL,
                          cols = NULL, lwd=NULL, type=NULL, leg_pos=NULL,
                          xlim=NULL,ylim=NULL,
-                         col.regions=NULL,cut=NULL,...){
+                         col.regions=NULL,cut=NULL,nms=NULL,...){
+
+  if(!is.list(curves[[1]])){
+    if(ncol(curves$f)>=1){
+      curves0 = curves
+      curves = list()
+      for(i in 1:ncol(curves0$f)){
+        curves[[i]] = list(x = curves0$x,
+                           f = curves0$f[,i])
+      }
+    }
+  }
+
 
   if(ncol(curves[[1]]$x)==1L){
 
@@ -891,6 +1013,16 @@ GP.plot.curves = function(curves,xlab=NULL,ylab=NULL,
     if(is.null(leg_pos))
       leg_pos = "topleft"
 
+    if(is.null(ylim)){
+      y_max = -Inf
+      y_min = Inf
+      for(i in 1:length(curves)){
+        y_max = max(y_max,curves[[i]]$f)
+        y_min = min(y_min,curves[[i]]$f)
+      }
+      ylim = c(y_min,y_max)
+    }
+
     plot(curves[[1]]$x[od],curves[[1]]$f[od],
          xlab=xlab,ylab=ylab,
          xlim=xlim,
@@ -901,12 +1033,13 @@ GP.plot.curves = function(curves,xlab=NULL,ylab=NULL,
         lines(curves[[i]]$x[od],curves[[i]]$f[od],col=cols[i],lwd=lwd)
       }
     }
-
-    nms = names(curves)
     if(is.null(nms)){
-      nms = 1:length(curves)
+      nms = names(curves)
+      if(is.null(nms)){
+        nms = 1:length(curves)
+      }
     }
-    legend(leg_pos,nms,col=cols,lwd=lwd,lty=1)
+    legend(leg_pos,legend=nms,col=cols,lwd=lwd,lty=1)
   }
 
   if(ncol(curves[[1]]$x)==2L){
